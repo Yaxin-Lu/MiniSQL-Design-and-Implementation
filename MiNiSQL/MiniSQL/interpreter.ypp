@@ -1,0 +1,365 @@
+%{
+    
+    #include <cstdio>
+    #include <stdlib.h>
+    #include <unistd.h>
+    #include <string>
+    #include <time.h>
+    #include "SQLcommand.hpp"
+    #include "TableInfo.hpp"
+    #include "ConditionContent.hpp"
+    #include "CatalogManager.hpp"
+    #include "API.hpp"
+    #include "BufferManager.hpp"
+    
+    std::string tmpAttrName;
+    int fileflag=0;
+    int attrcount;
+    SQLcommand sql;
+    TableInfo tableInfo;
+    API api;
+    extern "C"{
+        void yyerror(const char *s);
+        extern int yylex(void);
+        extern int yylineno;
+        extern char* yytext;
+        extern FILE* yyin;
+    }
+    %}
+
+%union {char *strVal;char *id;int intVal;float flVal;char *condition;}
+%token UNIQUE TABLE SELECT INSERT DROP DELETE INDEX QUIT EXECFILE FROM WHERE CREATE RESET
+%token INTO VALUES ON PRIMARY KEY INTT CHART FLOATT ANND
+%token UNEXPECTED WHITESPACE FEOF ERR
+%token <strVal> STRING FILENAME
+%token <id> identifier
+%token <intVal> intnum
+%token <flVal> fnum
+%left ANND
+%left LE GE NE '>' '<'
+%right '='
+%left '+' '-' '*' '/'
+%type <condition> where_clause condition
+%type <strVal> operation value
+%type <flVal> number
+%type <id> priattr attrn attrname tablename indexname selectattr
+
+
+
+%%
+
+
+
+
+line	: create_table ';'	{
+    api.createTable(tableInfo);
+    tableInfo.reset();
+}
+| create_index	';'	{
+    api.createIndex(sql);
+    sql.reset();
+}
+| select_statement ';'	{
+    api.selectRecord(sql);
+    sql.reset();
+}
+| delete_statement ';'	{
+    api.deleteRecord(sql);
+    sql.reset();
+}
+| drop_table ';'	{
+    api.dropTable(sql);
+    sql.reset();
+}
+| drop_index ';'	{
+    api.dropIndex(sql);
+    sql.reset();
+}
+| insert_statement ';' {
+    api.insertRecord(sql);
+    sql.reset();
+}
+| EXECFILE STRING ';' {
+    const char* path=$2;
+    char temp[512];
+    int i;
+    getcwd(temp, 512);
+    std::string s;
+    for (i=0; temp[i]!='\0'; i++)
+        s+=temp[i];
+
+    s+='/';
+    char file[50];
+    strcpy(file,s.c_str());
+    strcat(file,path);
+    FILE *fp=fopen(file,"r");
+    if(fp==NULL)
+        printf("Cannot open file %s\n", $2);
+    else {
+        fileflag=1;
+        yyin=fp;
+    }
+}
+| QUIT ';'	{
+    printf("Closing files and writing back buffer...\n");
+    BufferManager bm;
+    bm.writeBackAllCache();
+    bm.closeAllFiles();
+    printf("Operation finished.\n");
+    
+    printf("Thank you~\n");
+    exit(EXIT_SUCCESS);
+}
+
+| line QUIT ';'	{
+    printf("Closing files and writing back buffer...\n");
+    BufferManager bm;
+    bm.writeBackAllCache();
+    bm.closeAllFiles();
+    printf("Operation finished.\n");
+    
+    printf("Thanks for using~\n");
+    exit(EXIT_SUCCESS);
+}
+| line create_table ';'	{
+    api.createTable(tableInfo);
+    tableInfo.reset();
+}
+| line create_index ';' {
+    api.createIndex(sql);
+    sql.reset();
+}
+| line select_statement ';' {
+    api.selectRecord(sql);
+    sql.reset();
+}
+| line delete_statement ';'	{
+    api.deleteRecord(sql);
+    sql.reset();
+}
+| line insert_statement ';' {
+    api.insertRecord(sql);
+    sql.reset();
+}
+| line drop_table ';' {
+    api.dropTable(sql);
+    sql.reset();
+}
+| line drop_index ';' {
+    api.dropIndex(sql);
+    sql.reset();
+}
+| line EXECFILE STRING ';' {
+    const char* path=$3;
+    char temp[512];
+    int i;
+    getcwd(temp, 512);
+    std::string s;
+    for (i=0; temp[i]!='\0'; i++)
+    s+=temp[i];
+    
+    s+='/';
+    char file[50];
+    strcpy(file,s.c_str());
+    strcat(file,path);
+    FILE *fp=fopen(file,"r");
+    if(fp==NULL)
+    printf("Cannot open file %s\n", $3);
+    else {
+        fileflag=1;
+        yyin=fp;
+    }
+}
+;
+
+
+create_index	: CREATE INDEX indexname ON tablename '(' attrname ')'
+;
+
+insert_statement	: INSERT INTO tablename VALUES '(' valuelist ')'
+;
+
+valuelist	: value {}
+| valuelist ',' value {}
+;
+
+value :
+STRING {
+    if(sql.attrNum>31) {
+        printf("Too many values!\n");
+        yyparse();
+    }
+    else {
+        sql.attrNum++;
+        sql.condCont[sql.attrNum].attrValueStr=$1;
+        sql.condCont[sql.attrNum].attrType="CHAR";
+    }
+}
+| intnum {
+    if(sql.attrNum>31) {
+        printf("Too many values!\n");
+        yyparse();
+    }
+    else {
+        sql.attrNum++;
+        sql.condCont[sql.attrNum].attrValueFlo=(float)$1;
+        sql.condCont[sql.attrNum].attrValueInt=$1;
+        sql.condCont[sql.attrNum].attrType="INT";
+    }
+}
+| fnum {
+    if(sql.attrNum>31) {
+        printf("Too many values!\n");
+        yyparse();
+    }
+    else {
+        sql.attrNum++;
+        sql.condCont[sql.attrNum].attrValueFlo=$1;
+        sql.condCont[sql.attrNum].attrType="FLOAT";
+    }
+}
+;
+
+select_statement	: SELECT '*' FROM tablename where_clause	{ }
+| SELECT attrs FROM tablename where_clause	{;}
+;
+attrs : selectattr
+| attrs ',' selectattr
+;
+selectattr	: identifier	{ }
+delete_statement	: DELETE FROM tablename where_clause	{;}
+|DELETE attrs FROM tablename where_clause	{;}
+;
+where_clause	: WHERE condition	{;}
+|/* empty */ {;}
+;
+
+condition	: attrname operation fnum
+{
+    sql.condNum++;
+    sql.condCont[sql.condNum].attrName=tmpAttrName;
+    sql.condCont[sql.condNum].op=$2;
+    sql.condCont[sql.condNum].attrValueFlo=$3;
+    sql.condCont[sql.condNum].attrType="FLOAT";
+}
+| attrname operation STRING
+{
+    sql.condNum++;
+    sql.condCont[sql.condNum].attrName=tmpAttrName;
+    sql.condCont[sql.condNum].op=$2;
+    sql.condCont[sql.condNum].attrValueStr=$3;
+    sql.condCont[sql.condNum].attrType="CHAR";
+}
+| attrname operation intnum
+{
+    sql.condNum++;
+    sql.condCont[sql.condNum].attrName=tmpAttrName;
+    sql.condCont[sql.condNum].op=$2;
+    sql.condCont[sql.condNum].attrValueFlo=$3;
+    sql.condCont[sql.condNum].attrValueInt=$3;
+    sql.condCont[sql.condNum].attrType="INT";
+}
+| condition ANND condition	{;}
+;
+operation	:
+  GE	{strcpy($$,">=");}
+| LE	{strcpy($$,"<=");}
+| NE	{strcpy($$,"<>");}
+| '<'	{strcpy($$,"<");}
+| '>'	{strcpy($$,">");}
+| '='	{strcpy($$,"=");}
+;
+number	: intnum {$$=$1;}
+| fnum {$$=$1;}
+;
+tablename	: identifier	{
+    sql.tableName=$1;
+    tableInfo.tableName=$1;
+}
+;
+
+create_table	:
+CREATE TABLE tablename '(' table_element_list ',' table_constraint ')'
+| CREATE TABLE tablename '(' table_element_list ')' {printf("creating...");}
+;
+
+table_element_list	: table_element
+| table_element_list ',' table_element
+;
+table_element	: column_def
+;
+column_def	: attrn data_type
+| attrn data_type column_constraint
+;
+attrn 	: identifier	{
+    if(tableInfo.attrNum<32) {
+        tableInfo.attrNum++;
+        tableInfo.attrName[tableInfo.attrNum-1]=$1;
+    }
+    else {
+        yyerror("Too many attributes!");
+        tableInfo.reset();
+        yyparse();
+    }
+}
+attrname	: identifier	{
+    tmpAttrName=$1;
+    sql.attrName=$1;
+}
+;
+data_type	:
+INTT	{
+    tableInfo.attrType[tableInfo.attrNum-1]="int";
+}
+| CHART '(' intnum ')'	{
+    if ($3>255 || $3<1) {
+        yyerror("Char is defined too long or too short!");
+        tableInfo.reset();
+        yyparse();
+    }
+    else
+        tableInfo.attrType[tableInfo.attrNum-1]="char("+to_string($3)+")";
+}
+| FLOATT	{
+    tableInfo.attrType[tableInfo.attrNum-1]="float";
+}
+;
+table_constraint: PRIMARY KEY '(' priattr ')'	{ }
+;
+priattr	: identifier	{
+    tableInfo.primaryKey=$1;
+}
+;
+column_constraint	: UNIQUE	{
+    tableInfo.attrUnique[tableInfo.attrNum-1]='Y';
+}
+;
+
+
+
+drop_table	: DROP TABLE tablename{;}
+;
+drop_index	: DROP INDEX indexname{;}
+;
+indexname	: identifier	{
+    sql.indexName=$1;
+}
+;
+
+
+%%
+void yyerror(const char *s)
+{
+    std::string tmp1,tmp2;
+    char c;
+    
+    tmp1=s;
+    tmp2=yytext;
+    if (strcmp(yytext,";") && strcmp(s,"Unterminated string"))
+        while ((c=yylex())!=';');
+
+    if (strcmp(s,"Char is defined too long or too short!") && strcmp(s,"Too many attributes!"))
+        printf("%s near '%s'\n",s,tmp2.c_str());
+    else
+        printf("%s\n",s);
+}

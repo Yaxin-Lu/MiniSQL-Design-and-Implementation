@@ -1,0 +1,17 @@
+
+
+#ifndef Global_h
+#define Global_h
+
+#include "assert.h"
+
+typedef int PageIndexType;
+const int MAXPATHDEEPTH = 100;
+const int PAGESIZE = 4096 * sizeof(char);
+const int NODESIZE = 1024;
+const PageIndexType ROOTPAGE = 1;
+const PageIndexType UNDEFINEED_PAGE_NUM = -1;
+const int CACHECAPACITY = 10;
+const int LRUCOUNTERMAX = 2000000000;
+
+#endif
